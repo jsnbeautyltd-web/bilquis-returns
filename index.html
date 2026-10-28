@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>رواجع · Bilquis</title>
+<!-- Bilquis returns scanner (Rani 2026-10-28). Google's frame around the Apps Script page blocks the camera, so the page
+     lives here and sends each scan to the sheet's web app. The link's # part carries the web app (s) and the key (k);
+     nothing secret is in this file. -->
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: Arial, sans-serif; margin: 0; padding: 16px; background: #f6f6f6; color: #111; }
+  h1 { font-size: 22px; margin: 0 0 12px; }
+  button { font-size: 20px; padding: 14px; border: 0; border-radius: 10px; width: 100%; margin: 6px 0; background: #1a73e8; color: #fff; }
+  button.alt { background: #555; }
+  button:disabled { opacity: .5; }
+  #reader { width: 100%; margin: 8px 0; border-radius: 10px; overflow: hidden; }
+  #res { font-size: 20px; padding: 14px; border-radius: 10px; margin: 10px 0; display: none; white-space: pre-line; }
+  .ok { background: #c8f2d0; } .old { background: #fff1c2; } .bad { background: #ffd2ce; }
+  input { font-size: 22px; padding: 12px; width: 100%; border-radius: 10px; border: 1px solid #bbb; direction: ltr; text-align: center; }
+  h3 { margin: 18px 0 4px; }
+  li { font-size: 16px; padding: 6px 0; border-bottom: 1px solid #ddd; }
+  #count { color: #555; font-size: 15px; }
+</style>
+</head>
+<body>
+<h1>📦 رواجع: امسحوا باركود الطرد الراجع</h1>
+<div id="setup" class="bad" style="display:none;padding:14px;border-radius:10px;font-size:18px">
+  الرابط ناقص. افتحوا الصفحة من الرابط الكامل اللي بشيت «Returned parcels».
+</div>
+<div id="app">
+  <button id="cam" onclick="startCam()">📷 افتحوا الكاميرا</button>
+  <div id="reader"></div><div id="still" style="display:none"></div>
+  <button id="grab" class="alt" type="button" style="display:none" onclick="grabFrame()">🔢 اقرا الرقم المكتوب (إذا الباركود ما انقرا)</button>
+  <button class="alt" type="button" onclick="document.getElementById('pic').click()">📸 صوّروا الباركود</button>
+  <input id="pic" type="file" accept="image/*" capture="environment" style="display:none" onchange="scanPic(this)">
+  <div id="res"></div>
+  <input id="num" inputmode="numeric" placeholder="أو اكتبوا رقم الشحنة / الطلب">
+  <button onclick="send(document.getElementById('num').value)">سجّل</button>
+  <h3>انمسح هلق: <span id="count"></span></h3>
+  <ul id="list"></ul>
+</div>
+<script>
+var CFG = (function () {  // from the link's #s=…&k=…, kept on the phone so a home-screen icon without it still works
+  var h = {}, saved = {};
+  location.hash.replace(/^#/, '').split('&').forEach(function (p) { var kv = p.split('='); if (kv[1]) h[kv[0]] = decodeURIComponent(kv[1]); });
+  try { saved = JSON.parse(localStorage.getItem('bq_returns') || '{}'); } catch (e) {}
+  if (h.s && h.k) { saved = { s: h.s, k: h.k }; try { localStorage.setItem('bq_returns', JSON.stringify(saved)); } catch (e) {} }
+  return saved;
+})();
+if (!CFG.s || !CFG.k) { document.getElementById('setup').style.display = 'block'; document.getElementById('app').style.display = 'none'; }
+
+var cam = null, last = '', lastAt = 0, done = 0;
+var FORMATS = window.Html5QrcodeSupportedFormats ? [Html5QrcodeSupportedFormats.CODE_128, Html5QrcodeSupportedFormats.CODE_39,
+  Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.QR_CODE] : [];
+
+function show(cls, text) { var r = document.getElementById('res'); r.className = cls; r.style.display = 'block'; r.textContent = text; }
+function buzz(ok) {  // no sound (Rani 2026-10-25: «stop beeping mute it»); iPhones don't vibrate from a page
+  try { if (navigator.vibrate) navigator.vibrate(ok ? 120 : [80, 60, 80]); } catch (e) {}
+}
+function call(body) {
+  body.k = CFG.k;
+  return fetch('https://script.google.com/macros/s/' + CFG.s + '/exec', { method: 'POST', body: JSON.stringify(body) })
+    .then(function (r) { return r.json(); })
+    .then(function (a) {
+      if (!a.ok && (a.error === 'not linked' || a.error === 'unknown action')) a.error = 'الشيت لسا مش جاهز لهاي الصفحة (لازم نسخة جديدة من الـ web app)';
+      return a;
+    }, function () { return { ok: false, error: 'ما وصل للشيت: تأكدوا من الإنترنت وجربوا كمان مرة' }; });
+}
+function shown(a) {  // one parcel's answer from the sheet
+  if (!a.ok) { buzz(false); show('bad', '❌ ' + a.error); return; }
+  buzz(true);
+  var line = a.order + (a.town ? ' · ' + a.town : '') + ' · ' + a.courier + ' ' + a.shipment;
+  show(a.already ? 'old' : 'ok', (a.already ? '↩️ انمسح قبل: ' : '✅ رجع: ') + line + (a.warn ? '\n' + a.warn : ''));
+  var li = document.createElement('li');
+  li.textContent = (a.already ? '↩️ ' : '✅ ') + line + (a.warn ? ' ' + a.warn : '');
+  var ul = document.getElementById('list'); ul.insertBefore(li, ul.firstChild);
+  if (!a.already) done++;
+  document.getElementById('count').textContent = done ? '(' + done + ')' : '';
+  document.getElementById('num').value = '';
+}
+function send(code) {
+  code = String(code || '').trim();
+  if (!code || (code === last && Date.now() - lastAt < 5000)) return;  // the camera reads the same label many times a second
+  last = code; lastAt = Date.now();
+  show('old', '⏳ ' + code);
+  call({ action: 'returns_scan', number: code }).then(shown);
+}
+function camError(e) {
+  var s = String((e && (e.name || e.message)) || e || '');
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return 'هاد المتصفح ما بيفتح الكاميرا: افتحوا الرابط بـ Safari أو Chrome (مش من جوّا واتساب أو الشيت)';
+  if (/NotAllowed|Permission|denied/i.test(s)) return 'الكاميرا ممنوعة لهاد الموقع: اسمحوا للكاميرا (Safari: aA ← إعدادات الموقع ← الكاميرا ← سماح، Chrome: القفل جنب الرابط) وحدّثوا الصفحة';
+  if (/NotFound|no camera|Requested device not found/i.test(s)) return 'ما لقيت كاميرا بهاد الجهاز';
+  if (/NotReadable|in use|Could not start/i.test(s)) return 'الكاميرا مشغولة بتطبيق ثاني: سكّروه وجربوا كمان مرة';
+  return 'ما قدرت أفتح الكاميرا (' + s.slice(0, 80) + ')';
+}
+function startCam() {
+  if (!window.Html5Qrcode) { show('bad', 'الصفحة ما حمّلت منيح: حدّثوها، أو استعملوا «صوّروا الباركود»'); return; }
+  cam = cam || new Html5Qrcode('reader', { formatsToSupport: FORMATS, experimentalFeatures: { useBarCodeDetectorIfSupported: true } });
+  var box = function (w, h) { return { width: Math.floor(w * 0.92), height: Math.max(80, Math.floor(h * 0.4)) }; };
+  var started = function () {
+    document.getElementById('cam').style.display = 'none';
+    document.getElementById('grab').style.display = 'block';
+    show('old', 'حطّوا الباركود بالعرض جوّا المربع، وقرّبوا لحد ما يوضح');
+  };
+  var full = { fps: 15, qrbox: box, videoConstraints: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } } };
+  cam.start({ facingMode: 'environment' }, full, send, function () {}).then(started).catch(function (e) {
+    if (/NotAllowed|Permission|denied/i.test(String((e && (e.name || e.message)) || e))) { show('bad', camError(e)); return; }
+    cam.start({ facingMode: 'environment' }, { fps: 15, qrbox: box }, send, function () {})  // simpler settings, once
+      .then(started).catch(function (e2) { show('bad', camError(e2) + '\nبينفع كمان «صوّروا الباركود»'); });
+  });
+}
+function byText(data) {  // the barcode didn't decode: the sheet reads the printed number under it
+  show('old', '⏳ عم بقرا الرقم المكتوب على الملصق…');
+  call({ action: 'returns_photo', data: data }).then(function (r) {
+    if (!r.ok) { buzz(false); show('bad', '❌ ' + r.error); return; }
+    r.results.forEach(shown);
+  });
+}
+function grabFrame() {  // the live camera's picture → the printed number
+  var v = document.querySelector('#reader video');
+  if (!v || !v.videoWidth) { show('bad', '❌ الكاميرا مش شغالة'); return; }
+  var k = Math.min(1, 1600 / Math.max(v.videoWidth, v.videoHeight)), c = document.createElement('canvas');
+  c.width = Math.round(v.videoWidth * k); c.height = Math.round(v.videoHeight * k);
+  c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+  byText(c.toDataURL('image/jpeg', 0.85).split(',')[1]);
+}
+function shrink(file, max) {  // a phone photo (12 MP) decodes and uploads better at ~1600 px
+  return new Promise(function (resolve, reject) {
+    var img = new Image(), url = URL.createObjectURL(file);
+    img.onload = function () {
+      var k = Math.min(1, max / Math.max(img.width, img.height)), c = document.createElement('canvas');
+      c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      c.toBlob(function (b) { resolve({ blob: b, data: c.toDataURL('image/jpeg', 0.85).split(',')[1] }); }, 'image/jpeg', 0.85);
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+function scanPic(input) {
+  var f = input.files && input.files[0];
+  input.value = '';
+  if (!f) return;
+  show('old', '⏳ عم بقرا الصورة…');
+  shrink(f, 1600).then(function (s) {
+    if (!window.Html5Qrcode) { byText(s.data); return; }
+    new Html5Qrcode('still', { formatsToSupport: FORMATS, experimentalFeatures: { useBarCodeDetectorIfSupported: true } })
+      .scanFile(new File([s.blob], 'label.jpg', { type: 'image/jpeg' }), false)
+      .then(function (text) { send(text); })
+      .catch(function () { byText(s.data); });
+  }).catch(function () { show('bad', '❌ ما قدرت أفتح الصورة'); });
+}
+document.getElementById('num').addEventListener('keydown', function (e) { if (e.key === 'Enter') send(this.value); });
+</script>
+</body>
+</html>
