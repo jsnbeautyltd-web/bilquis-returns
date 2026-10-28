@@ -42,7 +42,18 @@
   <h3>انمسح هلق: <span id="count"></span></h3>
   <ul id="list"></ul>
 </div>
+<p id="ver" style="color:#999;font-size:12px;text-align:center;margin-top:24px"></p>
 <script>
+var VERSION = '2026-10-28c';  // shown at the bottom; change it with every upload so home-screen icons update
+(function () {  // a home-screen icon keeps an old copy of the page (Rani 2026-10-28: the tick worked in Safari, not in
+  // the icon): fetch it fresh, and if it's newer, reload once under a new address the cache doesn't have
+  try {
+    fetch(location.pathname + '?fresh=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.text(); }).then(function (t) {
+      var m = t.match(/var VERSION = '([^']+)'/);
+      if (m && m[1] !== VERSION && location.search.indexOf('v=' + m[1]) < 0) location.replace(location.pathname + '?v=' + m[1] + location.hash);
+    }).catch(function () {});
+  } catch (e) {}
+})();
 var CFG = (function () {  // from the link's #s=…&k=…, kept on the phone so a home-screen icon without it still works
   var h = {}, saved = {};
   location.hash.replace(/^#/, '').split('&').forEach(function (p) { var kv = p.split('='); if (kv[1]) h[kv[0]] = decodeURIComponent(kv[1]); });
@@ -51,6 +62,7 @@ var CFG = (function () {  // from the link's #s=…&k=…, kept on the phone so 
   return saved;
 })();
 if (!CFG.s || !CFG.k) { document.getElementById('setup').style.display = 'block'; document.getElementById('app').style.display = 'none'; }
+document.getElementById('ver').textContent = 'نسخة ' + VERSION;
 
 var cam = null, last = '', lastAt = 0, done = 0;
 var FORMATS = window.Html5QrcodeSupportedFormats ? [Html5QrcodeSupportedFormats.CODE_128, Html5QrcodeSupportedFormats.CODE_39,
@@ -64,10 +76,13 @@ function buzz(ok) {  // iPhones don't vibrate from a page
 // two for one scanned before, nothing for ❌. iPhones only play sound a tap started, so the first tap opens it.
 var audio = null;
 try { if (navigator.audioSession) navigator.audioSession.type = 'transient'; } catch (e) {}  // heard with the phone on silent
-function unlockSound() {
+function unlockSound() {  // on every tap: a home-screen icon only lets sound out after a sound actually played in a tap
   try {
     if (!audio) { var C = window.AudioContext || window.webkitAudioContext; if (!C) return; audio = new C(); }
-    if (audio.state === 'suspended') audio.resume();
+    if (audio.state !== 'running') audio.resume();  // 'suspended', or iOS's 'interrupted' (camera, app switch)
+    var s = audio.createBufferSource();
+    s.buffer = audio.createBuffer(1, 1, 22050);  // one silent sample
+    s.connect(audio.destination); s.start(0);
   } catch (e) {}
 }
 document.addEventListener('touchend', unlockSound, true);
@@ -75,6 +90,7 @@ document.addEventListener('click', unlockSound, true);
 function tick(times) {
   try {
     if (!audio) return;
+    if (audio.state !== 'running') audio.resume();
     for (var i = 0; i < times; i++) {
       var t = audio.currentTime + 0.01 + i * 0.13, o = audio.createOscillator(), g = audio.createGain();
       o.type = 'square'; o.frequency.value = 2000;
