@@ -57,8 +57,33 @@ var FORMATS = window.Html5QrcodeSupportedFormats ? [Html5QrcodeSupportedFormats.
   Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.QR_CODE] : [];
 
 function show(cls, text) { var r = document.getElementById('res'); r.className = cls; r.style.display = 'block'; r.textContent = text; }
-function buzz(ok) {  // no sound (Rani 2026-10-25: «stop beeping mute it»); iPhones don't vibrate from a page
+function buzz(ok) {  // iPhones don't vibrate from a page
   try { if (navigator.vibrate) navigator.vibrate(ok ? 120 : [80, 60, 80]); } catch (e) {}
+}
+// A tick when a parcel is registered (Rani 2026-10-28; the 10-25 beep on every read was muted): one for a new one,
+// two for one scanned before, nothing for ❌. iPhones only play sound a tap started, so the first tap opens it.
+var audio = null;
+try { if (navigator.audioSession) navigator.audioSession.type = 'transient'; } catch (e) {}  // heard with the phone on silent
+function unlockSound() {
+  try {
+    if (!audio) { var C = window.AudioContext || window.webkitAudioContext; if (!C) return; audio = new C(); }
+    if (audio.state === 'suspended') audio.resume();
+  } catch (e) {}
+}
+document.addEventListener('touchend', unlockSound, true);
+document.addEventListener('click', unlockSound, true);
+function tick(times) {
+  try {
+    if (!audio) return;
+    for (var i = 0; i < times; i++) {
+      var t = audio.currentTime + 0.01 + i * 0.13, o = audio.createOscillator(), g = audio.createGain();
+      o.type = 'square'; o.frequency.value = 2000;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.5, t + 0.003);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
+      o.connect(g); g.connect(audio.destination); o.start(t); o.stop(t + 0.06);
+    }
+  } catch (e) {}
 }
 function call(body) {
   body.k = CFG.k;
@@ -71,7 +96,7 @@ function call(body) {
 }
 function shown(a) {  // one parcel's answer from the sheet
   if (!a.ok) { buzz(false); show('bad', '❌ ' + a.error); return; }
-  buzz(true);
+  buzz(true); tick(a.already ? 2 : 1);
   var line = a.order + (a.town ? ' · ' + a.town : '') + ' · ' + a.courier + ' ' + a.shipment;
   show(a.already ? 'old' : 'ok', (a.already ? '↩️ انمسح قبل: ' : '✅ رجع: ') + line + (a.warn ? '\n' + a.warn : ''));
   var li = document.createElement('li');
