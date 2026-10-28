@@ -23,14 +23,28 @@
   h3 { margin: 18px 0 4px; }
   li { font-size: 16px; padding: 6px 0; border-bottom: 1px solid #ddd; }
   #count { color: #555; font-size: 15px; }
+  #tabs { display: flex; gap: 8px; margin-bottom: 10px; }
+  #tabs button { margin: 0; font-size: 18px; padding: 10px; }
+  #tabs button.off { background: #ddd; color: #333; }
 </style>
 </head>
 <body>
-<h1>📦 رواجع: امسحوا باركود الطرد الراجع</h1>
+<div id="tabs">
+  <button id="tab-ret" type="button" onclick="showTab('ret')">📦 رواجع</button>
+  <button id="tab-st" type="button" class="off" onclick="showTab('st')">🧾 كشوفات</button>
+</div>
 <div id="setup" class="bad" style="display:none;padding:14px;border-radius:10px;font-size:18px">
   الرابط ناقص. افتحوا الصفحة من الرابط الكامل اللي بشيت «Returned parcels».
 </div>
+<div id="st" style="display:none">
+  <h1>🧾 كشف من شركة التوصيل: صوّروا الورقة كلها</h1>
+  <button type="button" onclick="document.getElementById('stpic').click()">🧾 صوّروا الكشف</button>
+  <input id="stpic" type="file" accept="image/*" capture="environment" style="display:none" onchange="sendStatement(this)">
+  <div id="stres" style="font-size:20px;padding:14px;border-radius:10px;margin:10px 0;display:none;white-space:pre-line"></div>
+  <ul id="stlist"></ul>
+</div>
 <div id="app">
+  <h1>📦 رواجع: امسحوا باركود الطرد الراجع</h1>
   <button id="cam" onclick="startCam()">📷 افتحوا الكاميرا</button>
   <div id="reader"></div><div id="still" style="display:none"></div>
   <button id="grab" class="alt" type="button" style="display:none" onclick="grabFrame()">🔢 اقرا الرقم المكتوب (إذا الباركود ما انقرا)</button>
@@ -44,7 +58,7 @@
 </div>
 <p id="ver" style="color:#999;font-size:12px;text-align:center;margin-top:24px"></p>
 <script>
-var VERSION = '2026-10-28c';  // shown at the bottom; change it with every upload so home-screen icons update
+var VERSION = '2026-10-28d';  // shown at the bottom; change it with every upload so home-screen icons update
 (function () {  // a home-screen icon keeps an old copy of the page (Rani 2026-10-28: the tick worked in Safari, not in
   // the icon): fetch it fresh, and if it's newer, reload once under a new address the cache doesn't have
   try {
@@ -61,8 +75,11 @@ var CFG = (function () {  // from the link's #s=…&k=…, kept on the phone so 
   if (h.s && h.k) { saved = { s: h.s, k: h.k }; try { localStorage.setItem('bq_returns', JSON.stringify(saved)); } catch (e) {} }
   return saved;
 })();
-if (!CFG.s || !CFG.k) { document.getElementById('setup').style.display = 'block'; document.getElementById('app').style.display = 'none'; }
-document.getElementById('ver').textContent = 'نسخة ' + VERSION;
+if (!CFG.s || !CFG.k) {
+  document.getElementById('setup').style.display = 'block'; document.getElementById('app').style.display = 'none';
+  document.getElementById('tabs').style.display = 'none';
+}
+document.getElementById('ver').innerHTML = 'نسخة <bdi dir="ltr">' + VERSION + '</bdi>';
 
 var cam = null, last = '', lastAt = 0, done = 0;
 var FORMATS = window.Html5QrcodeSupportedFormats ? [Html5QrcodeSupportedFormats.CODE_128, Html5QrcodeSupportedFormats.CODE_39,
@@ -194,6 +211,44 @@ function scanPic(input) {
       .then(function (text) { send(text); })
       .catch(function () { byText(s.data); });
   }).catch(function () { show('bad', '❌ ما قدرت أفتح الصورة'); });
+}
+function showTab(which) {  // two pages on one icon: returns (each parcel scanned) and statements (a photo of the paper)
+  var st = which === 'st';
+  document.getElementById('st').style.display = st ? 'block' : 'none';
+  document.getElementById('app').style.display = st ? 'none' : 'block';
+  document.getElementById('tab-st').className = st ? '' : 'off';
+  document.getElementById('tab-ret').className = st ? 'off' : '';
+  if (st && cam && cam.isScanning) {
+    cam.stop().then(function () {
+      document.getElementById('cam').style.display = 'block'; document.getElementById('grab').style.display = 'none';
+    }).catch(function () {});
+  }
+}
+function stShow(cls, text) { var r = document.getElementById('stres'); r.className = cls; r.style.display = 'block'; r.textContent = text; }
+// A courier's paper statement (Rani 2026-10-28: «just find add them as orders that they paid us for… we will test»):
+// the sheet reads the photo and adds the statement to «Courier statements», so its orders count as paid. Nothing checked here.
+function sendStatement(input) {
+  var f = input.files && input.files[0];
+  input.value = '';
+  if (!f) return;
+  document.getElementById('stlist').innerHTML = '';
+  stShow('old', '⏳ عم بقرا الكشف… (بياخد لحد دقيقة)');
+  shrink(f, 2400).then(function (s) {  // the table's small print needs more pixels than a barcode
+    return call({ action: 'returns_statement', id: Date.now() + '-' + Math.random().toString(36).slice(2, 8), data: s.data });
+  }).then(function (a) {
+    if (!a.ok) { buzz(false); stShow('old', '❌ ' + a.error); return; }
+    buzz(true); tick(a.duplicate ? 2 : 1);
+    var which = [a.courier, a.number].filter(Boolean).join(' ');  // on its own line: Latin + digits jumble an Arabic one
+    stShow(a.duplicate ? 'old' : 'ok', (a.duplicate ? '↩️ هاد الكشف انسجّل من قبل'
+      : (a.page ? '✅ انضافت الصفحة للكشف' : '✅ انسجّل الكشف') + ' · ' + a.orders.length + ' طلبات' + (a.net ? ' · ' + a.net + '₪' : ''))
+      + (which ? '\n' + which : ''));
+    var ul = document.getElementById('stlist');
+    a.orders.forEach(function (o) {
+      var li = document.createElement('li');
+      li.textContent = (o.order || 'ما لقيت الطلب') + ' · ' + o.shipment;
+      ul.appendChild(li);
+    });
+  }, function () { stShow('old', '❌ ما قدرت أفتح الصورة'); });
 }
 document.getElementById('num').addEventListener('keydown', function (e) { if (e.key === 'Enter') send(this.value); });
 </script>
