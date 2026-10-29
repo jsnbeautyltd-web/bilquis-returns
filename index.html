@@ -26,6 +26,7 @@
   #tabs { display: flex; gap: 8px; margin-bottom: 10px; }
   #tabs button { margin: 0; font-size: 18px; padding: 10px; }
   #tabs button.off { background: #ddd; color: #333; }
+  .ask { background: #fff1c2; font-size: 20px; padding: 14px; border-radius: 10px; margin: 10px 0; white-space: pre-line; }
 </style>
 </head>
 <body>
@@ -51,6 +52,7 @@
   <button class="alt" type="button" onclick="document.getElementById('pic').click()">📸 صوّروا الباركود</button>
   <input id="pic" type="file" accept="image/*" capture="environment" style="display:none" onchange="scanPic(this)">
   <div id="res"></div>
+  <div id="asks"></div>
   <input id="num" inputmode="numeric" placeholder="أو اكتبوا رقم الشحنة / الطلب">
   <button onclick="send(document.getElementById('num').value)">سجّل</button>
   <h3>انمسح هلق: <span id="count"></span></h3>
@@ -58,7 +60,7 @@
 </div>
 <p id="ver" style="color:#999;font-size:12px;text-align:center;margin-top:24px"></p>
 <script>
-var VERSION = '2026-10-28d';  // shown at the bottom; change it with every upload so home-screen icons update
+var VERSION = '2026-10-29a';  // shown at the bottom; change it with every upload so home-screen icons update
 (function () {  // a home-screen icon keeps an old copy of the page (Rani 2026-10-28: the tick worked in Safari, not in
   // the icon): fetch it fresh, and if it's newer, reload once under a new address the cache doesn't have
   try {
@@ -174,8 +176,29 @@ function byText(data) {  // the barcode didn't decode: the sheet reads the print
   show('old', '⏳ عم بقرا الرقم المكتوب على الملصق…');
   call({ action: 'returns_photo', data: data }).then(function (r) {
     if (!r.ok) { buzz(false); show('bad', '❌ ' + r.error); return; }
-    r.results.forEach(shown);
+    if (!r.confirm) { r.results.forEach(shown); return; }  // a sheet from before 29-10 registered them itself
+    var asked = 0, missed = [];
+    r.results.forEach(function (a) {
+      if (a.already) { a.ok = true; shown(a); } else if (a.ask) { ask(a); asked++; } else missed.push('❌ ' + a.error);
+    });
+    if (asked) show('old', ['👆 تأكدوا من رقم الطلب والبلد، وكبسوا «سجّل»'].concat(missed).join('\n'));
+    else if (missed.length) { buzz(false); show('bad', missed.concat('اكتبوا الرقم بإيدكم').join('\n')); }
   });
+}
+// A number read from a photo counts only once they tap «سجّل» under its order and town (29-10: 250286326 was read as
+// 250266326, another of our orders, and registered as back).
+function ask(a) {
+  var box = document.getElementById('asks'), card = document.createElement('div');
+  var yes = document.createElement('button'), no = document.createElement('button');
+  card.className = 'ask';
+  card.textContent = '🔢 ' + a.order + (a.town ? ' · ' + a.town : '') + ' · ' + a.courier + ' ' + a.shipment + (a.warn ? '\n' + a.warn : '');
+  yes.type = 'button'; no.type = 'button'; no.className = 'alt';
+  yes.textContent = '✅ هاد هو، سجّل';
+  no.textContent = '✖ مش هاد';
+  yes.onclick = function () { box.removeChild(card); last = ''; send(a.shipment); };
+  no.onclick = function () { box.removeChild(card); show('old', 'امسحوا الباركود كمان مرة، أو اكتبوا الرقم بإيدكم'); };
+  card.appendChild(yes); card.appendChild(no);
+  box.appendChild(card);
 }
 function grabFrame() {  // the live camera's picture → the printed number
   var v = document.querySelector('#reader video');
@@ -236,6 +259,7 @@ function sendStatement(input) {
   shrink(f, 2400).then(function (s) {  // the table's small print needs more pixels than a barcode
     return call({ action: 'returns_statement', id: Date.now() + '-' + Math.random().toString(36).slice(2, 8), data: s.data });
   }).then(function (a) {
+    if (!a.ok && a.kind === 'returns' && a.stored) { buzz(true); tick(1); stShow('old', '📦 ' + a.error); return; }  // kept, never a payment
     if (!a.ok) { buzz(false); stShow('old', '❌ ' + a.error); return; }
     buzz(true); tick(a.duplicate ? 2 : 1);
     var which = [a.courier, a.number].filter(Boolean).join(' ');  // on its own line: Latin + digits jumble an Arabic one
