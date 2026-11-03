@@ -27,6 +27,11 @@
   #tabs button { margin: 0; font-size: 18px; padding: 10px; }
   #tabs button.off { background: #ddd; color: #333; }
   .ask { background: #fff1c2; font-size: 20px; padding: 14px; border-radius: 10px; margin: 10px 0; white-space: pre-line; }
+  #stpages { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+  .pg { position: relative; width: 90px; }
+  .pg img { width: 90px; height: 120px; object-fit: cover; border-radius: 8px; border: 2px solid #bbb; display: block; }
+  .pg span { display: block; text-align: center; font-size: 14px; }
+  .pg button { position: absolute; top: 3px; left: 3px; width: 30px; height: 30px; padding: 0; margin: 0; font-size: 16px; border-radius: 15px; background: rgba(0,0,0,.6); }
 </style>
 </head>
 <body>
@@ -38,9 +43,13 @@
   الرابط ناقص. افتحوا الصفحة من الرابط الكامل اللي بشيت «Returned parcels».
 </div>
 <div id="st" style="display:none">
-  <h1>🧾 كشف من شركة التوصيل: صوّروا الورقة كلها</h1>
-  <button type="button" onclick="document.getElementById('stpic').click()">🧾 صوّروا الكشف</button>
-  <input id="stpic" type="file" accept="image/*" capture="environment" style="display:none" onchange="sendStatement(this)">
+  <h1>🧾 كشف من شركة التوصيل: صوّروا كل صفحة، الورقة كلها</h1>
+  <button id="stcam" type="button" onclick="document.getElementById('stpic').click()">📸 صوّروا صفحة</button>
+  <button id="stalb" type="button" class="alt" onclick="document.getElementById('stalbum').click()">🖼️ اختاروا صور من الألبوم (كم صورة مرة وحدة)</button>
+  <input id="stpic" type="file" accept="image/*" capture="environment" style="display:none" onchange="addPages(this)">
+  <input id="stalbum" type="file" accept="image/*" multiple style="display:none" onchange="addPages(this)">
+  <div id="stpages"></div>
+  <button id="stsend" type="button" style="display:none" onclick="sendPages()"></button>
   <div id="stres" style="font-size:20px;padding:14px;border-radius:10px;margin:10px 0;display:none;white-space:pre-line"></div>
   <ul id="stlist"></ul>
 </div>
@@ -60,7 +69,7 @@
 </div>
 <p id="ver" style="color:#999;font-size:12px;text-align:center;margin-top:24px"></p>
 <script>
-var VERSION = '2026-10-29a';  // shown at the bottom; change it with every upload so home-screen icons update
+var VERSION = '2026-11-03a';  // shown at the bottom; change it with every upload so home-screen icons update
 (function () {  // a home-screen icon keeps an old copy of the page (Rani 2026-10-28: the tick worked in Safari, not in
   // the icon): fetch it fresh, and if it's newer, reload once under a new address the cache doesn't have
   try {
@@ -127,7 +136,7 @@ function call(body) {
     .then(function (a) {
       if (!a.ok && (a.error === 'not linked' || a.error === 'unknown action')) a.error = 'الشيت لسا مش جاهز لهاي الصفحة (لازم نسخة جديدة من الـ web app)';
       return a;
-    }, function () { return { ok: false, error: 'ما وصل للشيت: تأكدوا من الإنترنت وجربوا كمان مرة' }; });
+    }, function () { return { ok: false, offline: true, error: 'ما وصل للشيت: تأكدوا من الإنترنت وجربوا كمان مرة' }; });
 }
 function shown(a) {  // one parcel's answer from the sheet
   if (!a.ok) { buzz(false); show('bad', '❌ ' + a.error); return; }
@@ -250,29 +259,97 @@ function showTab(which) {  // two pages on one icon: returns (each parcel scanne
 function stShow(cls, text) { var r = document.getElementById('stres'); r.className = cls; r.style.display = 'block'; r.textContent = text; }
 // A courier's paper statement (Rani 2026-10-28: «just find add them as orders that they paid us for… we will test»):
 // the sheet reads the photo and adds the statement to «Courier statements», so its orders count as paid. Nothing checked here.
-function sendStatement(input) {
-  var f = input.files && input.files[0];
+// A statement can be several pages (Rani 2026-11-03: «allow multi pictures»): each photo taken or picked from the album
+// waits here in order, and «ابعتوا» sends them one after another. The sheet puts the pages of one paper in one row (the
+// same number, or a page without one right after it), so they go one at a time, first page first.
+var pages = [], sending = false;
+function drawPages() {
+  var box = document.getElementById('stpages'), btn = document.getElementById('stsend');
+  box.innerHTML = '';
+  pages.forEach(function (pg, i) {
+    var d = document.createElement('div'), img = document.createElement('img'), n = document.createElement('span'), x = document.createElement('button');
+    d.className = 'pg'; img.src = pg.url; n.textContent = 'صفحة ' + (i + 1);
+    x.type = 'button'; x.textContent = '✖'; x.disabled = sending;
+    x.onclick = function () { URL.revokeObjectURL(pg.url); pages.splice(i, 1); drawPages(); };
+    d.appendChild(img); d.appendChild(n); d.appendChild(x); box.appendChild(d);
+  });
+  btn.style.display = pages.length ? 'block' : 'none';
+  btn.textContent = '📤 ابعتوا الكشف (' + (pages.length === 1 ? 'صفحة وحدة' : pages.length + ' صفحات') + ')';
+  ['stcam', 'stalb', 'stsend'].forEach(function (id) { document.getElementById(id).disabled = sending; });
+}
+function addPages(input) {
+  var files = [].slice.call(input.files || []);
   input.value = '';
-  if (!f) return;
+  if (!files.length || sending) return;
   document.getElementById('stlist').innerHTML = '';
-  stShow('old', '⏳ عم بقرا الكشف… (بياخد لحد دقيقة)');
-  shrink(f, 2400).then(function (s) {  // the table's small print needs more pixels than a barcode
-    return call({ action: 'returns_statement', id: Date.now() + '-' + Math.random().toString(36).slice(2, 8), data: s.data });
-  }).then(function (a) {
-    if (!a.ok && a.kind === 'returns' && a.stored) { buzz(true); tick(1); stShow('old', '📦 ' + a.error); return; }  // kept, never a payment
-    if (!a.ok) { buzz(false); stShow('old', '❌ ' + a.error); return; }
-    buzz(true); tick(a.duplicate ? 2 : 1);
-    var which = [a.courier, a.number].filter(Boolean).join(' ');  // on its own line: Latin + digits jumble an Arabic one
-    stShow(a.duplicate ? 'old' : 'ok', (a.duplicate ? '↩️ هاد الكشف انسجّل من قبل'
-      : (a.page ? '✅ انضافت الصفحة للكشف' : '✅ انسجّل الكشف') + ' · ' + a.orders.length + ' طلبات' + (a.net ? ' · ' + a.net + '₪' : ''))
-      + (which ? '\n' + which : ''));
-    var ul = document.getElementById('stlist');
-    a.orders.forEach(function (o) {
-      var li = document.createElement('li');
-      li.textContent = (o.order || 'ما لقيت الطلب') + ' · ' + o.shipment;
-      ul.appendChild(li);
+  stShow('old', '⏳ عم بجهّز الصور…');
+  var failed = 0;
+  files.reduce(function (p, f) {  // one at a time: a phone has little memory for 12 MP photos
+    return p.then(function () {
+      return shrink(f, 2400).then(function (s) {  // the table's small print needs more pixels than a barcode
+        pages.push({ data: s.data, url: URL.createObjectURL(s.blob) });
+      }, function () { failed++; });
     });
-  }, function () { stShow('old', '❌ ما قدرت أفتح الصورة'); });
+  }, Promise.resolve()).then(function () {
+    drawPages();
+    stShow('old', (failed ? '❌ ' + failed + ' صور ما انفتحوا\n' : '')
+      + (pages.length ? '👆 في صفحة كمان؟ صوّروها. خلصتوا؟ كبسوا «ابعتوا الكشف»' : ''));
+  });
+}
+function later(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+function sendPage(pg, tries) {  // the same id on every try: a page the sheet already read isn't added twice
+  pg.id = pg.id || Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+  return call({ action: 'returns_statement', id: pg.id, data: pg.data }).then(function (a) {
+    var busy = !a.ok && /عم ينقرا هلق/.test(a.error || '');  // another statement is being read: wait for it
+    if ((busy && tries < 3) || (a.offline && tries < 1)) return later(20000).then(function () { return sendPage(pg, tries + 1); });
+    return a;
+  });
+}
+function sendPages() {
+  if (sending || !pages.length) return;
+  sending = true; drawPages();
+  var sent = pages.slice(), total = sent.length;
+  document.getElementById('stlist').innerHTML = '';
+  sent.reduce(function (p, pg, i) {
+    return p.then(function () {
+      stShow('old', '⏳ عم بقرا ' + (total > 1 ? 'صفحة ' + (i + 1) + ' من ' + total : 'الكشف') + '… (كل صفحة لحد دقيقة)');
+      return sendPage(pg, 0).then(function (a) { pg.answer = a; });
+    });
+  }, Promise.resolve()).then(function () {
+    // A page that never reached the sheet stays, to send again (same id); the rest are done.
+    pages = sent.filter(function (pg) { return pg.answer.offline; });
+    sent.forEach(function (pg) { if (!pg.answer.offline) URL.revokeObjectURL(pg.url); });
+    sending = false; drawPages();
+    stDone(sent.map(function (pg) { return pg.answer; }));
+    if (pages.length) stShow('old', document.getElementById('stres').textContent + '\n👆 ' + (pages.length === 1 ? 'الصفحة اللي ما وصلت لسا هون' : 'الصفحات اللي ما وصلت لسا هون') + ': كبسوا «ابعتوا الكشف» كمان مرة');
+  });
+}
+function stDone(answers) {  // all the pages' answers → one summary and one list of orders
+  var lines = [], orders = [], seen = {}, added = 0, again = 0, ret = 0, bad = 0, unread = [], which = '', net = null, many = answers.length > 1;
+  answers.forEach(function (a, i) {
+    var pg = many ? 'صفحة ' + (i + 1) + ': ' : '';
+    if (!a.ok && a.kind === 'returns' && a.stored) { ret++; lines.push('📦 ' + pg + a.error); return; }  // kept, never a payment
+    if (!a.ok) { bad++; if (!a.offline) unread.push(i + 1); lines.push('❌ ' + pg + a.error); return; }
+    if (a.duplicate) again++; else added++;
+    if (many) lines.push((a.duplicate ? '↩️ ' + pg + 'انسجّلت من قبل' : '✅ ' + pg + a.orders.length + ' طلبات'));
+    which = which || [a.courier, a.number].filter(Boolean).join(' ');  // on its own line: Latin + digits jumble an Arabic one
+    if (a.net) net = a.net;
+    a.orders.forEach(function (o) { if (!seen[o.shipment]) { seen[o.shipment] = 1; orders.push(o); } });
+  });
+  var head = '', joined = !many && answers[0].ok && answers[0].page;  // one page of a statement sent before
+  if (added || again) {
+    head = (joined ? '✅ انضافت الصفحة للكشف' : added ? '✅ انسجّل الكشف' : '↩️ هاد الكشف انسجّل من قبل') + ' · ' + orders.length + ' طلبات'
+      + (net ? ' · ' + net + '₪' : '') + (which ? '\n' + which : '');
+  }
+  if (unread.length && many) lines.push('صوّروا ' + (unread.length === 1 ? 'صفحة ' : 'صفحات ') + unread.join(' و') + ' كمان مرة وابعتوها: بتنضاف لنفس الكشف');
+  if (bad) buzz(false); else { buzz(true); tick(added || ret ? 1 : 2); }
+  stShow(added && !bad ? 'ok' : 'old', [head].concat(lines).filter(Boolean).join('\n'));
+  var ul = document.getElementById('stlist');
+  orders.forEach(function (o) {
+    var li = document.createElement('li');
+    li.textContent = (o.order || 'ما لقيت الطلب') + ' · ' + o.shipment;
+    ul.appendChild(li);
+  });
 }
 document.getElementById('num').addEventListener('keydown', function (e) { if (e.key === 'Enter') send(this.value); });
 </script>
